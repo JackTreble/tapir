@@ -4,6 +4,8 @@ import java.util.concurrent.TimeUnit
 
 import com.github.ghik.silencer.silent
 import org.scalatest.{FlatSpec, Matchers}
+import sttp.tapir.Validator.FieldName
+import sttp.tapir.server.ServerDefaults.ValidationMessages
 
 import scala.concurrent.duration.Duration
 
@@ -157,6 +159,23 @@ class ValidatorTest extends FlatSpec with Matchers {
     val v = Validator.enum(List(1, 2, 3, 4))
     v.validate(1) shouldBe empty
     v.validate(0) shouldBe List(ValidationError(v, 0))
+  }
+
+  it should "validate a custom case class" in {
+    case class InnerCaseClass(innerValue: Long)
+    case class MyClass(name: String, age: Int, field: InnerCaseClass)
+    val validator = Validator.customCaseClass[MyClass](doValidate = { v =>
+      val nameErrors = if (v.name.length < 3) List(InvalidField(Some(v.name), "Name length should be >= 3", List(FieldName("name", "name")))) else List.empty
+      val ageErrors = if (v.age <= 0) List(InvalidField(None, "Age should be > 0", List(FieldName("age", "age")))) else List.empty
+      val innerErrors = if (v.field.innerValue <= 0) List(InvalidField(Some(v.field.innerValue), "Inner value should be > 0", List(FieldName("field.innerValue", "field.innerValue")))) else List.empty
+      nameErrors ++ ageErrors ++ innerErrors
+    })
+
+    ValidationMessages.validationErrorsMessage(validator.validate(MyClass("ab", -1, InnerCaseClass(-3)))) shouldBe
+      """expected name to pass custom validation: Name length should be >= 3, but was 'ab',
+        |expected age to pass custom validation: Age should be > 0, but was 'invalid',
+        |expected field.innerValue to pass custom validation: Inner value should be > 0, but was '-3'"""
+        .stripMargin.replaceAll("\n", " ")
   }
 
   it should "skip collection validation for array if element validator is passing" in {
